@@ -6,8 +6,10 @@ from datetime import datetime
 import io
 
 
+
 # ===== CONFIGURATION =====
 st.set_page_config(page_title="KPI Dashboard - Strat AI Solutions", layout="wide")
+
 
 
 # ===== FILENAME VALIDATION =====
@@ -18,6 +20,7 @@ def is_valid_filename(fname):
     """
     pattern = r'^[A-Za-z0-9]+_[A-Za-z0-9]+_[A-Za-z]+_\d{8}\.(pdf|jpg|png|docx)$'
     return bool(re.match(pattern, fname))
+
 
 
 def parse_filename(fname):
@@ -33,6 +36,7 @@ def parse_filename(fname):
         'date': date_ext[0],
         'extension': date_ext[1]
     }
+
 
 
 # ===== DATA LOADING WITH TEST SCENARIOS =====
@@ -97,6 +101,7 @@ def load_log_data(test_scenario='happy_path'):
     return pd.DataFrame(data)
 
 
+
 def load_file_registry(test_scenario='happy_path'):
     """Load file registry based on test scenario"""
     
@@ -149,12 +154,43 @@ def load_file_registry(test_scenario='happy_path'):
     return pd.DataFrame(registry)
 
 
+
+# ===== SESSION STATE INITIALIZATION =====
+def initialize_session_state(test_scenario):
+    """Initialize session state for file registry if not exists"""
+    if 'file_registry' not in st.session_state or st.session_state.get('current_scenario') != test_scenario:
+        st.session_state.file_registry = load_file_registry(test_scenario)
+        st.session_state.current_scenario = test_scenario
+
+
+def add_file_to_registry(filename):
+    """Add a new file to the registry in session state"""
+    parsed = parse_filename(filename)
+    new_file = {
+        'Filename': filename,
+        'Valid': is_valid_filename(filename),
+        'Client': parsed['client'] if parsed else 'N/A',
+        'DealID': parsed['deal_id'] if parsed else 'N/A',
+        'DocType': parsed['doc_type'] if parsed else 'N/A',
+        'Date': parsed['date'] if parsed else 'N/A'
+    }
+    
+    # Check if file already exists
+    if filename not in st.session_state.file_registry['Filename'].values:
+        new_row = pd.DataFrame([new_file])
+        st.session_state.file_registry = pd.concat([st.session_state.file_registry, new_row], ignore_index=True)
+        return True
+    return False
+
+
+
 # ===== PYARROW-FREE DISPLAY FUNCTIONS =====
 def display_dataframe_as_table(df, title=None):
     """Display dataframe as static table without pyarrow"""
     if title:
         st.subheader(title)
     st.table(df)
+
 
 
 def display_dataframe_as_html(df, title=None):
@@ -164,6 +200,7 @@ def display_dataframe_as_html(df, title=None):
     
     html_table = df.to_html(index=False, escape=False, table_id="custom-table")
     st.markdown(html_table, unsafe_allow_html=True)
+
 
 
 def display_colored_registry(file_df):
@@ -229,6 +266,7 @@ def display_colored_registry(file_df):
     st.markdown(html_content, unsafe_allow_html=True)
 
 
+
 # ===== MAIN DASHBOARD =====
 def main():
     st.title("📊 KPI Dashboard - Strat AI Solutions")
@@ -260,9 +298,12 @@ def main():
     
     view_mode = st.sidebar.radio("📊 View Mode", ["Overview", "File Registry", "QA Status"])
     
+    # Initialize session state for file registry
+    initialize_session_state(test_scenario)
+    
     # Load data with selected test scenario
     df = load_log_data(test_scenario)
-    file_df = load_file_registry(test_scenario)
+    file_df = st.session_state.file_registry  # Use session state instead of loading fresh
     
     # Display test scenario banner
     st.info(f"🧪 **Testing Mode Active:** {scenario_descriptions[test_scenario]}")
@@ -273,6 +314,7 @@ def main():
         show_file_registry(file_df, test_scenario)
     elif view_mode == "QA Status":
         show_qa_status(df, test_scenario)
+
 
 
 # ===== OVERVIEW TAB =====
@@ -360,6 +402,7 @@ def show_overview(df, test_scenario):
         export_charts(df)
 
 
+
 # ===== FILE REGISTRY TAB =====
 def show_file_registry(file_df, test_scenario):
     st.header("📁 File Registry & Naming Compliance")
@@ -403,9 +446,19 @@ def show_file_registry(file_df, test_scenario):
     
     if uploaded_file:
         if is_valid_filename(uploaded_file.name):
-            st.success(f"✅ Valid filename: {uploaded_file.name}")
-            parsed = parse_filename(uploaded_file.name)
-            st.json(parsed)
+            # Add file to registry
+            if add_file_to_registry(uploaded_file.name):
+                st.success(f"✅ Valid filename: {uploaded_file.name} - Added to registry!")
+                parsed = parse_filename(uploaded_file.name)
+                st.json(parsed)
+                st.info("File has been added. Click below to refresh metrics.")
+                # Provide a rerun button
+                if st.button("🔄 Refresh Dashboard"):
+                    st.rerun()
+            else:
+                st.warning(f"⚠️ File {uploaded_file.name} already exists in registry.")
+                parsed = parse_filename(uploaded_file.name)
+                st.json(parsed)
         else:
             st.error(f"❌ Invalid filename: {uploaded_file.name}")
             st.info("Expected format: ClientName_DealID_DocType_YYYYMMDD.ext\nExample: AcmeCorp_DEAL123_IDProof_20251005.pdf")
@@ -434,6 +487,7 @@ def show_file_registry(file_df, test_scenario):
         - `BetaTech_DEAL007_TaxDocs_2025-10-06.pdf` ❌ (date format)
         - `invalid_file_name.pdf` ❌ (missing structure)
         """)
+
 
 
 # ===== QA STATUS TAB =====
@@ -490,6 +544,7 @@ def show_qa_status(df, test_scenario):
         st.text_area("Copy to Notion:", summary, height=300)
 
 
+
 def generate_daily_summary(df, test_scenario):
     """Generate formatted daily summary for Notion"""
     latest = df.iloc[-1]
@@ -503,8 +558,10 @@ def generate_daily_summary(df, test_scenario):
     
     summary = f"""## Daily QA Summary - {latest['Date']}
 
+
 **Test Scenario:** {test_scenario.replace('_', ' ').title()}
 **Status:** {latest['Status']}
+
 
 ### Key Metrics
 - Run Success Rate: {latest['Run_Success_Rate']*100:.1f}%
@@ -512,14 +569,17 @@ def generate_daily_summary(df, test_scenario):
 - Doc Cycle Time: {latest['Doc_Cycle_Time']} days
 - Onboarding Duration: {latest['Onboarding_Duration']} hours
 
+
 ### Trends (Last 5 Days)
 - Median Cycle Time: {df['Doc_Cycle_Time'].median():.1f} days
 - Average Success Rate: {df['Run_Success_Rate'].mean()*100:.1f}%
 - Total Missing Items: {int(df['Missing_Items'].sum())}
 - Average Onboarding: {df['Onboarding_Duration'].mean():.1f} hours
 
+
 ### Status Notes
 {scenario_notes[test_scenario]}
+
 
 ### Action Items
 """
@@ -543,10 +603,12 @@ def generate_daily_summary(df, test_scenario):
 ### Next Steps
 {'✅ Maintain current standards and procedures' if latest['Status'] == 'GREEN' else '⚠️ Address red flags and re-test workflows'}
 
+
 ---
 *Auto-generated by KPI Dashboard - Test Mode: {test_scenario}*
 """
     return summary.strip()
+
 
 
 # ===== EXPORT FUNCTIONALITY =====
@@ -595,6 +657,7 @@ def export_charts(df):
     )
     
     st.success(f"✅ Charts exported as Dashboard_Metrics_{timestamp}.png")
+
 
 
 # ===== RUN APP =====
